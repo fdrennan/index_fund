@@ -1,0 +1,195 @@
+---
+title: 'Index Fund'
+date: "December 2, 2018"
+output:
+  prettydoc::html_pretty:
+    theme: tactile
+    highlight: github
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+rm(list = ls())
+```
+
+```{r}
+library(tidyverse)
+library(rvest)
+library(RSelenium)
+library(tidyquant)  # To get market capitalization
+library(lpSolve)    # To run the integer program
+```
+
+```{r}
+
+grab_table <- function(url) {
+  url %>% 
+  read_html %>% 
+  html_node('table') %>% 
+  html_table(fill = TRUE) %>% 
+  as_tibble() %>% 
+  rename_all(
+    function(x) {
+      x %>% 
+        str_to_lower %>% 
+        str_replace_all(" ", "_")
+    }
+  )
+}
+
+snp <- grab_table('https://www.slickcharts.com/sp500')
+  
+```
+
+```{r}
+glimpse(snp)
+```
+
+
+```{R}
+snp_symbols <- 
+    snp %>% 
+    pull(symbol)
+```
+
+```{r}
+if(!file.exists('the_snp.rda')) {
+  the_snp <- read_rds('the_snp.rda')
+} else {
+  the_snp <- 
+    tq_get(snp_symbols, 
+           get = "stock.prices",
+           complete_cases = TRUE,
+           from = "2019-01-01",
+           to   = "2019-06-10")
+  write_rds(the_snp, 'the_snp.rda')
+}
+
+```
+
+
+```{r}
+snp_returns <- 
+  the_snp %>% 
+  arrange(symbol, date) %>% 
+  group_by(symbol) %>% 
+  mutate(daily_return = 1 + (close -lag(close)) / lag(close),
+         daily_return = if_else(is.na(daily_return), 1, daily_return),
+         return  = cumprod(daily_return)) %>% 
+  select(date, symbol, return) %>% 
+  ungroup 
+```
+
+```{r}
+ggplot(snp_returns) + 
+  aes(x = date, y = return, colour = symbol) +
+  geom_line(size = .05) +
+  theme(legend.position = 'none')
+```
+
+```{r}
+remove_return <- 
+  snp_returns %>%
+  group_by(symbol) %>% 
+  count %>% 
+  ungroup %>% 
+  filter(n != max(n)) %>% 
+  pull(symbol)
+```
+
+```{r}
+returns_matrix <- 
+  snp_returns %>% 
+  filter(!symbol %in% remove_return) 
+```
+
+```{r}
+return_values_by_column <- 
+  returns_matrix %>% 
+  split(.$symbol) %>% 
+  map_dfc(
+    function(x) {
+      select(x, return)
+    }
+  )
+```
+
+
+```{r}
+colnames(return_values_by_column) = unique(returns_matrix$symbol)
+```
+
+```{r}
+build_matrix <- function(return_values_by_column, n_to_represent = 5) {
+  
+  n_stocks = ncol(return_values_by_column)
+  
+  q = c(
+    rep(0, 2 * n_stocks ),
+    rep(1,     n_stocks )
+  )
+  
+  ones  <- rep(1, n_stocks)
+  zeros <- rep(0, n_stocks)
+  
+  subset_ones <- 
+    c(ones, zeros, zeros) %>% 
+    matrix(nrow = 1)
+  
+  subset_zeros <- 
+    c(zeros, ones, zeros) %>% 
+    matrix(nrow = 1)
+  
+  diagonal_pos <- diag(1, 2 * n_stocks)
+  diagonal_neg <- diag(-1, n_stocks)
+  
+  top_half <- rbind(q, subset_ones, subset_zeros) 
+  bottom_half <- 
+    cbind(
+      diagonal_pos,
+      rbind(
+        diagonal_neg,
+        diagonal_neg
+      )
+    )
+  
+  decision_matrix <- 
+    rbind(
+    top_half,
+    bottom_half
+  )
+  
+  list(
+    objective_function = c(
+      as.vector(cor(return_values_by_column)),
+      zeros
+    ),
+    decision_matrix = decision_matrix,
+    direction = c(
+      rep("=", nrow(top_half)),
+      rep(">=", nrow(bottom_half))
+    ),
+    obj_value = c(
+      n_to_represent,
+      rep(1, nrow(top_half) - 1),
+      rep(0, nrow(bottom_half))
+    )
+  )
+}
+```
+
+
+```{r}
+obj_directives <- build_matrix(
+  return_values_by_column[,1:60], 
+  n_to_represent = 10
+)
+
+lp(direction = 'max', 
+   objective.in = obj_directives$objective_function, 
+   const.mat = obj_directives$decision_matrix, 
+   const.dir = obj_directives$direction, 
+   const.rhs = obj_directives$obj_value, 
+   all.bin = TRUE)
+```
