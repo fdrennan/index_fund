@@ -124,34 +124,21 @@ colnames(return_values_by_column) = unique(returns_matrix$symbol)
 build_matrix <- function(return_values_by_column, n_to_represent = 5) {
   
   n_stocks = ncol(return_values_by_column)
+
+  ones  <- rep(1, n_stocks) %>% matrix(nrow = 1)
+  zeros <- rep(0, n_stocks) %>% matrix(nrow = 1)
   
-  q = c(
-    rep(0, 2 * n_stocks ),
-    rep(1,     n_stocks )
-  )
   
-  ones  <- rep(1, n_stocks)
-  zeros <- rep(0, n_stocks)
+  diagonal_pos <- diag( 1, n_stocks ^ 2)
+  diagonal_neg <- diag(-1, n_stocks    )
   
-  subset_ones <- 
-    c(ones, zeros, zeros) %>% 
-    matrix(nrow = 1)
+  top_half <- Matrix::bdiag(map(1:(n_stocks + 1), function(x) {ones})) %>% 
+    as.matrix()
   
-  subset_zeros <- 
-    c(zeros, ones, zeros) %>% 
-    matrix(nrow = 1)
-  
-  diagonal_pos <- diag(1, 2 * n_stocks)
-  diagonal_neg <- diag(-1, n_stocks)
-  
-  top_half <- rbind(q, subset_ones, subset_zeros) 
   bottom_half <- 
     cbind(
       diagonal_pos,
-      rbind(
-        diagonal_neg,
-        diagonal_neg
-      )
+      do.call(rbind, replicate(n_stocks, diagonal_neg, simplify=FALSE))
     )
   
   decision_matrix <- 
@@ -168,11 +155,11 @@ build_matrix <- function(return_values_by_column, n_to_represent = 5) {
     decision_matrix = decision_matrix,
     direction = c(
       rep("=", nrow(top_half)),
-      rep(">=", nrow(bottom_half))
+      rep("<=", nrow(bottom_half))
     ),
     obj_value = c(
+      rep(1, n_stocks),
       n_to_represent,
-      rep(1, nrow(top_half) - 1),
       rep(0, nrow(bottom_half))
     )
   )
@@ -181,15 +168,24 @@ build_matrix <- function(return_values_by_column, n_to_represent = 5) {
 
 
 ```{r}
+data_to_run <- return_values_by_column[,1:30]
+n_to_represent = 10
+
 obj_directives <- build_matrix(
-  return_values_by_column[,1:40], 
-  n_to_represent = 10
+  data_to_run, 
+  n_to_represent = n_to_represent
 )
 
-lp(direction = 'max', 
+solution <- 
+  lp(direction = 'max', 
    objective.in = obj_directives$objective_function, 
    const.mat = obj_directives$decision_matrix, 
    const.dir = obj_directives$direction, 
    const.rhs = obj_directives$obj_value, 
    all.bin = TRUE)
+solution
+picked_stocks <- 
+  rev(rev(solution$solution)[1:ncol(data_to_run)])
+
+
 ```
