@@ -54,7 +54,7 @@ snp_symbols <-
 ```
 
 ```{r}
-if(!file.exists('the_snp.rda')) {
+if(file.exists('the_snp.rda')) {
   the_snp <- read_rds('the_snp.rda')
 } else {
   the_snp <- 
@@ -182,7 +182,7 @@ build_matrix <- function(return_values_by_column, n_to_represent = 5) {
 
 ```{r}
 obj_directives <- build_matrix(
-  return_values_by_column[,1:60], 
+  return_values_by_column[,1:40], 
   n_to_represent = 10
 )
 
